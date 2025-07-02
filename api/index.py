@@ -9,7 +9,15 @@ async def show_body(request: Request):
     print(data)
     return data
 
+@app.get("/")
+def read_root():
+    return {"message": "Look Ma, I'm deployed!"}
 
-@app.post("/check")
-async def check():
-    return 'Ok'
+@app.get("/api/health")
+def health_check():
+    return {"status": "healthy"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
