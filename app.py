@@ -9,11 +9,12 @@ class WorkflowRunnerSettings(BaseSettings):
 
     KUBIYA_HOST: str = ""
     KUBIYA_API_KEY: str = ""
+    GH_TOKEN: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
-def parse_webhook_payload(raw_payload: dict) -> dict:
+def parse_gh_webhook_payload(raw_payload: dict) -> dict:
     payload = {
         "workflow_run_id": raw_payload["workflow_run"]["id"],
         "workflow_name": raw_payload["workflow_run"]["name"],
@@ -32,13 +33,9 @@ if __name__ == "__main__":
     from gh_payload import raw_payload
 
     config = WorkflowRunnerSettings()
-    payload = parse_webhook_payload(raw_payload=raw_payload)
+    payload = parse_gh_webhook_payload(raw_payload=raw_payload)
 
-    workflow = build_workflow(
-        kubiya_host=config.KUBIYA_HOST,
-        kubiya_api_key=config.KUBIYA_API_KEY,
-        **payload,
-    )
+    workflow = build_workflow(GH_TOKEN=config.GH_TOKEN, **payload)
     workflow_definition = workflow.model_dump(exclude_none=True, exclude_defaults=True)
 
     validate_workflow_definition(workflow_definition)
