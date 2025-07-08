@@ -16,14 +16,18 @@ def send_message(webhook_url: str, message: str) -> None:
 
 
 def main(
-        pipeline_webhook_mapping: dict[str, str],
-        default_webhook_url: str,
+    pipeline_webhook_mapping: dict[str, str],
+    default_webhook_url: str,
 ) -> None:
     """Main CLI entry point."""
-    parser = argparse.ArgumentParser(description="Send message to Teams webhook for a given pipeline")
-    parser.add_argument("pipeline_name", help="Name of the pipeline to get webhook URL for")
+    parser = argparse.ArgumentParser(
+        description="Send message to Teams webhook for a given pipeline"
+    )
+    parser.add_argument(
+        "pipeline_name", help="Name of the pipeline to get webhook URL for"
+    )
     parser.add_argument("payload", help="JSON string with message payload")
-    
+
     args = parser.parse_args()
     pipeline_name = args.pipeline_name
     payload = args.payload

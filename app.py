@@ -5,28 +5,34 @@ from workflow import build_workflow
 
 
 class WorkflowRunnerSettings(BaseSettings):
-    runner: str = 'demo'
+    runner: str = "demo"
 
-    KUBIYA_HOST: str = ''
-    KUBIYA_API_KEY: str = ''
+    KUBIYA_HOST: str = ""
+    KUBIYA_API_KEY: str = ""
 
-    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8')
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
-if __name__ == '__main__':
-    config = WorkflowRunnerSettings()
-
+def parse_webhook_payload(raw_payload: dict) -> dict:
     payload = {
-        'pipeline_name': '',
-        'pr_title': '',
-        'pr_url': '',
-        'repo_url': '',
-        'pr_number': '',
-        'workflow_run_id': '',
-        'author': '',
-        'workflow_url': '',
-        'triggered_at': '',
+        "workflow_run_id": raw_payload["workflow_run"]["id"],
+        "workflow_name": raw_payload["workflow_run"]["name"],
+        "workflow_url": raw_payload["workflow_run"]["url"],
+        "pr_title": raw_payload["workflow_run"]["display_title"],
+        "pr_url": raw_payload["workflow_run"]["pull_requests"][0]["url"],
+        "pr_number": raw_payload["workflow_run"]["pull_requests"][0]["number"],
+        "repo_url": raw_payload["repository"]["full_name"],
+        "author": raw_payload["workflow_run"]["triggering_actor"]["login"],
+        "triggered_at": raw_payload["workflow_run"]["updated_at"],
     }
+    return payload
+
+
+if __name__ == "__main__":
+    from gh_payload import raw_payload
+
+    config = WorkflowRunnerSettings()
+    payload = parse_webhook_payload(raw_payload=raw_payload)
 
     workflow = build_workflow(
         kubiya_host=config.KUBIYA_HOST,
