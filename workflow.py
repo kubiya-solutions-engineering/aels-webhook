@@ -1,34 +1,10 @@
-from typing import Any
-
 from kubiya_workflow_sdk.dsl_experimental import *  # noqa
 import inspect
 
-from openai import BaseModel
-from pydantic import RootModel, field_serializer
+from kubiya_workflow_sdk.dsl_experimental import WorkflowParams, WorkflowSecrets, Secret, Volume
 
 from tools.teams import send_message, webhook_config, prepare_summary
 from tools.gh import get_diff, post_pr_comment
-
-
-class WorkflowSecret(BaseModel):
-
-    name: str
-    value: Any
-
-
-class WorkflowSecrets(RootModel[list[WorkflowSecret]]):
-
-    def model_dump(self, *args, **kwargs) -> dict:
-        return {r.name: r.value for r in self.root}
-
-
-class WorkflowWithSecrets(Workflow):
-
-    secrets: WorkflowSecrets | None = None
-
-    @field_serializer("secrets")
-    def dump_secrets(self, v):
-        return v.model_dump()
 
 
 def build_workflow(
@@ -52,6 +28,8 @@ def build_workflow(
     param_workflow_url = Parameter(name="workflow_url", value=workflow_url)
     param_workflow_run_id = Parameter(name="workflow_run_id", value=workflow_run_id)
     param_triggered_at = Parameter(name="triggered_at", value=triggered_at)
+
+    shared_volume = Volume(name="shared_volume", path="/shared")
 
     step_0 = CommandStep(
         name="echo-show-input-params",
@@ -84,13 +62,40 @@ echo "{param_triggered_at.name}=${param_triggered_at.name};"
     )
 
     # TODO: Replace with implementation
-    step_3_1 = CommandStep(
+    step_3_1 = ExecutorStep(
         name="get-gh-failed-logs",
         description="Get failed Workflow Run logs from GitHub",
         output="GH_FAILED_LOGS",
         depends=[step_0.name],
-        command=f"""echo "Failed logs:"
-""",
+        executor=Executor(
+            type=ExecutorType.TOOL,
+            config=ToolExecutorConfig(
+                secrets={"GH_TOKEN": f"$GH_TOKEN"},
+                args={
+                    "file_path": "/shared/failed_logs.txt",
+                },
+                tool_def=ToolDef(
+                    name="get-gh-failed-logs",
+                    type="docker",
+                    image="python:3.12-slim",
+                    secrets=["GH_TOKEN"],
+                    content=f"""echo 'Failed Logs: ...'""",
+                    with_files=[
+                        FileDefinition(
+                            destination="/opt/scripts/reqs.txt",
+                            content="requests==2.32.3",
+                        ),
+                        FileDefinition(
+                            destination="/opt/scripts/get_diff.py",
+                            content=inspect.getsource(get_diff),
+                        ),
+                    ],
+                    with_volumes=[
+                        shared_volume,
+                    ],
+                ),
+            ),
+        ),
     )
 
     step_3_2 = ExecutorStep(
@@ -105,6 +110,7 @@ echo "{param_triggered_at.name}=${param_triggered_at.name};"
                 args={
                     "repo": f"${param_repo_url.name}",
                     "number": f"${param_pr_number.name}",
+                    "file_path": "/shared/pr_diff.txt",
                 },
                 tool_def=ToolDef(
                     name="github_pr_diff",
@@ -114,7 +120,7 @@ echo "{param_triggered_at.name}=${param_triggered_at.name};"
                     secrets=["GH_TOKEN"],
                     content=f"""set -e
 pip install -qqq -r /opt/scripts/reqs.txt
-python /opt/scripts/get_diff.py $repo $number""",
+python /opt/scripts/get_diff.py $repo $number $file_path""",
                     with_files=[
                         FileDefinition(
                             destination="/opt/scripts/reqs.txt",
@@ -124,6 +130,9 @@ python /opt/scripts/get_diff.py $repo $number""",
                             destination="/opt/scripts/get_diff.py",
                             content=inspect.getsource(get_diff),
                         ),
+                    ],
+                    with_volumes=[
+                        shared_volume,
                     ],
                 ),
             ),
@@ -164,9 +173,33 @@ Format your response with clear sections and actionable insights.""",
         ),
     )
 
+    step_4_1 = ExecutorStep(
+        name="save-pr-summary",
+        description="Shows github PR Diff",
+        depends=[step_4.name],
+        executor=Executor(
+            type=ExecutorType.TOOL,
+            config=ToolExecutorConfig(
+                args={
+                    "path": "/shared/analysis.txt",
+                },
+                tool_def=ToolDef(
+                    name="save-pr-summary",
+                    description="Shows github PR Diff",
+                    type="docker",
+                    image="python:3.12-slim",
+                    content=f"""python -c 'import os; with open(os.getenv("path"), "w") as f: f.write({step_4.output})'""",
+                    with_volumes=[
+                        shared_volume,
+                    ],
+                ),
+            ),
+        ),
+    )
+
     step_5 = ExecutorStep(
         name="post-pr-summary",
-        depends=[step_4.name],
+        depends=[step_4_1.name],
         output="PR_MESSAGE_URL",
         description="Post failure analysis comment on the GitHub PR",
         executor=Executor(
@@ -178,10 +211,8 @@ Format your response with clear sections and actionable insights.""",
                     type="docker",
                     image="python:3.12-slim",
                     secrets=["GH_TOKEN"],
-                    content="""pip install -qqq -r /opt/scripts/requirements.txt
-echo "$analysis" > /opt/scripts/analysis.txt
-echo "$failed_logs" > /opt/scripts/failed_logs.txt
-python /opt/scripts/post_pr_comment.py --repo "$repo" --number "$number" --workflow-run-id "$workflow_run_id" --analysis-path "/opt/scripts/analysis.txt" --failed-logs-path "/opt/scripts/failed_logs.txt" > /dev/null
+                    content=f"""pip install -qqq -r /opt/scripts/requirements.txt
+python /opt/scripts/post_pr_comment.py --repo "$repo" --number "$number" --workflow-run-id "$workflow_run_id" --analysis-path $analysis --failed-logs-path $failed_logs
 echo $PR_COMMENT
 """,
                     with_files=[
@@ -193,22 +224,17 @@ echo $PR_COMMENT
                             destination="/opt/scripts/post_pr_comment.py",
                             content=inspect.getsource(post_pr_comment),
                         ),
-                        FileDefinition(
-                            destination="/opt/scripts/analysis.txt",
-                            content="",
-                        ),
-                        FileDefinition(
-                            destination="/opt/scripts/failed_logs.txt",
-                            content="",
-                        ),
+                    ],
+                    with_volumes=[
+                        shared_volume,
                     ],
                 ),
                 args={
                     "repo": f"${param_repo_url.name}",
                     "number": f"${param_pr_number.name}",
                     "workflow_run_id": f"${param_workflow_run_id.name}",
-                    "analysis": f"${step_4.output}",
-                    "failed_logs": f"${step_3_1.output}",
+                    "analysis": "/shared/analysis.txt",
+                    "failed_logs": "/shared/failed_logs.txt",
                 },
                 secrets={"GH_TOKEN": "$GH_TOKEN"},
             ),
@@ -252,15 +278,16 @@ python /opt/scripts/send_message.py $pipeline_name $(python /opt/scripts/prepare
         ),
     )
 
-    workflow = WorkflowWithSecrets(
+    workflow = Workflow(
         name="prototype-workflow",
         description="Prototype workflow to demonstrate alternative implementation",
         steps=[
             step_0,
             step_2,
-            step_3_2,
             step_3_1,
+            step_3_2,
             step_4,
+            step_4_1,
             step_5,
         ],
         params=WorkflowParams(
@@ -278,7 +305,7 @@ python /opt/scripts/send_message.py $pipeline_name $(python /opt/scripts/prepare
         ),
         secrets=WorkflowSecrets(
             [
-                WorkflowSecret(name="GH_TOKEN", value=GH_TOKEN),
+                Secret(name="GH_TOKEN", value=GH_TOKEN),
             ]
         ),
     )

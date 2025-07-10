@@ -116,9 +116,6 @@ The workflow execution failed during the CI/CD pipeline. Here's the automated an
         # Output the comment URL for workflow to capture
         print(comment_result.get("html_url", ""))
 
-        os.environ["PR_COMMENT"] = comment_result.get("html_url")
-        print("Set environment variable `PR_COMMENT`\n")
-
         print("=== GitHub PR Comment Tool Completed Successfully ===")
 
     except requests.exceptions.RequestException as e:

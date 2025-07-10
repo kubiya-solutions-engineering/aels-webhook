@@ -29,6 +29,11 @@ def parse_gh_webhook_payload(raw_payload: dict) -> dict:
     return payload
 
 
+with open('./with_files.json') as f:
+    import json
+    a = json.load(f)
+
+
 if __name__ == "__main__":
     from gh_payload import raw_payload
 
